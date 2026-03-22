@@ -1,0 +1,6 @@
+@SecureExam.API_HostAddress = http://localhost:5162
+
+GET {{SecureExam.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

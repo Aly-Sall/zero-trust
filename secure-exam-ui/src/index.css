@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+/* On définit nos couleurs personnalisées pour le MVP ici */
+@theme {
+  --color-secureDark: #0f172a;
+  --color-secureAccent: #10b981;
+}
+
+body {
+  background-color: var(--color-secureDark);
+  color: white;
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+}

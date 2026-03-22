@@ -1,0 +1,18 @@
+# Dossiers de compilation
+bin/
+obj/
+
+# Fichiers de configuration locaux (Optionnel, mais bonne pratique)
+appsettings.Development.json
+
+# Base de données SQLite (CRUCIAL !)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Fichiers temporaires Visual Studio / Rider
+.vs/
+.idea/
+*.user
