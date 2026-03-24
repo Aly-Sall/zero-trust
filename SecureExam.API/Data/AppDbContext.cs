@@ -8,6 +8,7 @@ namespace SecureExam.API.Data
         public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
         public DbSet<User> Users { get; set; }
+        public DbSet<ExamResult> ExamResults { get; set; }
         public DbSet<BaselineSignature> BaselineSignatures { get; set; }
         public DbSet<ExamSession> ExamSessions { get; set; }
         public DbSet<IntegrityAlert> IntegrityAlerts { get; set; }

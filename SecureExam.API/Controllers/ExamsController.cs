@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SecureExam.API.Data;
+using SecureExam.API.Models;
 using SecureExam.API.Services;
 using System;
 using System.Collections.Generic;
@@ -10,6 +11,7 @@ using System.Threading.Tasks;
 
 namespace SecureExam.API.Controllers
 {
+    // --- DTOs ---
     public class QuestionBankPayload
     {
         public int Id { get; set; }
@@ -27,8 +29,9 @@ namespace SecureExam.API.Controllers
 
     public class ScheduleExamPayload
     {
+        public int Id { get; set; } 
         public string Title { get; set; }
-        public string Formation { get; set; } // Correspond au "Cohort" des étudiants
+        public string Formation { get; set; } 
         public DateTime ScheduledFor { get; set; }
         public int DurationMinutes { get; set; }
         public int SourceBankId { get; set; }
@@ -42,146 +45,176 @@ namespace SecureExam.API.Controllers
         public List<string> Options { get; set; }
     }
 
+    public class AiBankRequest
+    {
+        public string Course { get; set; }
+        public string Topic { get; set; }
+        public int QuestionCount { get; set; }
+    }
+
+    // 🛡️ NOUVEAU DTO POUR LA SOUMISSION
+    public class ExamSubmissionDto
+    {
+        public int ExamId { get; set; }
+        public string StudentEmail { get; set; }
+        public Dictionary<int, int> Answers { get; set; } 
+    }
+
+    // --- CONTRÔLEUR ---
     [ApiController]
     [Route("api/[controller]")]
     public class ExamsController : ControllerBase
     {
         private readonly AppDbContext _context;
-        private readonly IEmailService _emailService; // AJOUT : Service d'emails
+        private readonly IEmailService _emailService;
 
-        // Base de données temporaire en mémoire pour le MVP
         private static List<QuestionBankPayload> _questionBanks = new List<QuestionBankPayload>();
         private static List<ScheduleExamPayload> _scheduledExams = new List<ScheduleExamPayload>();
 
-        // AJOUT : On injecte IEmailService dans le constructeur
         public ExamsController(AppDbContext context, IEmailService emailService) 
         { 
             _context = context; 
             _emailService = emailService;
         }
 
-        // --- 1. CREATE BANK ---
         [HttpPost("banks")]
         public IActionResult SaveQuestionBank([FromBody] QuestionBankPayload payload)
         {
             if (payload == null || !payload.Questions.Any()) return BadRequest(new { message = "Bank must contain questions." });
-            
             payload.Id = _questionBanks.Count > 0 ? _questionBanks.Max(b => b.Id) + 1 : 1;
             _questionBanks.Add(payload);
-            
             return Ok(new { message = "Question Bank saved!", id = payload.Id });
         }
 
-        // --- 2. GET ALL BANKS (For the React Table) ---
         [HttpGet("banks")]
         public IActionResult GetAllBanks()
         {
             var summaries = _questionBanks.Select(b => new {
-                id = b.Id,
-                course = b.Course,
-                folderName = b.FolderName,
-                totalQuestions = b.Questions.Count,
-                lastUpdated = DateTime.Now.ToString("yyyy-MM-dd")
+                id = b.Id, course = b.Course, folderName = b.FolderName,
+                totalQuestions = b.Questions.Count, lastUpdated = DateTime.Now.ToString("yyyy-MM-dd")
             });
             return Ok(summaries);
         }
 
-        // --- 3. GET ONE BANK (For the Edit Button) ---
-        [HttpGet("banks/{id}")]
-        public IActionResult GetBank(int id)
+        [HttpPost("banks/generate-ai")]
+        public async Task<IActionResult> GenerateAiBank([FromBody] AiBankRequest request)
         {
-            var bank = _questionBanks.FirstOrDefault(b => b.Id == id);
-            if (bank == null) return NotFound();
-            return Ok(bank);
+            if (request == null || string.IsNullOrWhiteSpace(request.Topic)) return BadRequest(new { message = "Topic is required." });
+
+            await Task.Delay(2500); 
+
+            var aiQuestions = new List<QuestionPayload>();
+            string topic = request.Topic.ToLower();
+
+            if (topic.Contains("cyber") || topic.Contains("securit") || topic.Contains("reseau") || topic.Contains("tcp"))
+            {
+                aiQuestions.Add(new QuestionPayload { Text = "Quel protocole assure une communication sécurisée sur le web en chiffrant les données ?", Options = new List<string> { "HTTP", "FTP", "HTTPS", "Telnet" }, CorrectAnswerIndex = 2 });
+                aiQuestions.Add(new QuestionPayload { Text = "Dans le modèle OSI, à quelle couche se situe le protocole TCP ?", Options = new List<string> { "Couche 2 (Liaison)", "Couche 3 (Réseau)", "Couche 4 (Transport)", "Couche 7 (Application)" }, CorrectAnswerIndex = 2 });
+                aiQuestions.Add(new QuestionPayload { Text = "Quelle est la fonction principale d'un pare-feu (Firewall) ?", Options = new List<string> { "Accélérer la connexion", "Filtrer le trafic entrant et sortant", "Stocker des fichiers", "Chiffrer les emails" }, CorrectAnswerIndex = 1 });
+            }
+            else if (topic.Contains("data") || topic.Contains("ia") || topic.Contains("machine") || topic.Contains("python"))
+            {
+                aiQuestions.Add(new QuestionPayload { Text = "Quelle bibliothèque Python est spécialisée dans l'apprentissage automatique (Machine Learning) ?", Options = new List<string> { "Django", "Scikit-Learn", "Flask", "Requests" }, CorrectAnswerIndex = 1 });
+                aiQuestions.Add(new QuestionPayload { Text = "Qu'est-ce que le 'Deep Learning' ?", Options = new List<string> { "Une base de données très profonde", "Une branche de l'IA basée sur les réseaux de neurones", "Un algorithme de tri", "Une technique de compression" }, CorrectAnswerIndex = 1 });
+            }
+            else
+            {
+                for (int i = 0; i < request.QuestionCount; i++)
+                {
+                    aiQuestions.Add(new QuestionPayload { Text = $"Analysez l'impact de {request.Topic} dans un environnement Zero-Trust. Quel est le risque principal ?", Options = new List<string> { "Indisponibilité des données", "Usurpation d'identité", "Augmentation de la latence", "Fuite de mémoire" }, CorrectAnswerIndex = 1 });
+                }
+            }
+
+            var finalQuestions = aiQuestions.Take(request.QuestionCount).ToList();
+            var newBank = new QuestionBankPayload { Id = _questionBanks.Count > 0 ? _questionBanks.Max(b => b.Id) + 1 : 1, Course = request.Course, FolderName = $"AI-Gen: {request.Topic}", Questions = finalQuestions };
+            _questionBanks.Add(newBank);
+            return Ok(new { message = "Questions générées !", id = newBank.Id });
         }
 
-        // --- 4. UPDATE BANK ---
-        [HttpPut("banks/{id}")]
-        public IActionResult UpdateBank(int id, [FromBody] QuestionBankPayload payload)
-        {
-            var index = _questionBanks.FindIndex(b => b.Id == id);
-            if (index == -1) return NotFound();
-
-            payload.Id = id; 
-            _questionBanks[index] = payload;
-            return Ok(new { message = "Bank updated successfully!" });
-        }
-
-        // --- 5. DELETE BANK ---
-        [HttpDelete("banks/{id}")]
-        public IActionResult DeleteBank(int id)
-        {
-            var bank = _questionBanks.FirstOrDefault(b => b.Id == id);
-            if (bank != null) _questionBanks.Remove(bank);
-            return Ok(new { message = "Bank deleted!" });
-        }
-
-        // --- 6. SCHEDULE EXAM & AUTO-EMAIL STUDENTS (MISE À JOUR MAJEURE) ---
         [HttpPost("schedule")]
         public async Task<IActionResult> ScheduleExam([FromBody] ScheduleExamPayload payload)
         {
             if (payload == null) return BadRequest(new { message = "Invalid schedule data." });
-            
-            // 1. Sauvegarde de l'examen dans la mémoire
+            payload.Id = _scheduledExams.Count > 0 ? _scheduledExams.Max(e => e.Id) + 1 : 1;
             _scheduledExams.Add(payload);
 
             try
             {
-                // 2. Trouver tous les étudiants de cette classe (Cohorte)
-                var studentsInCohort = await _context.Users
-                    .Where(u => u.Role == "Student" && u.Cohort == payload.Formation)
-                    .ToListAsync();
-
-                // 3. Récupérer l'email du prof (Optionnel : Système par défaut si non connecté)
+                var studentsInCohort = await _context.Users.Where(u => u.Role == "Student" && u.Cohort == payload.Formation).ToListAsync();
                 string professorEmail = User.FindFirstValue(ClaimTypes.Email) ?? "admin@esaip.org";
-
-                // 4. Boucle d'envoi des emails
                 foreach (var student in studentsInCohort)
                 {
-                    await _emailService.SendExamNotificationEmailAsync(
-                        toEmail: student.Email, 
-                        courseName: payload.Title, 
-                        startTime: payload.ScheduledFor, 
-                        professorEmail: professorEmail
-                    );
+                    await _emailService.SendExamNotificationEmailAsync(student.Email, payload.Title, payload.ScheduledFor, professorEmail);
                 }
-
-                return Ok(new { 
-                    message = "Exam scheduled successfully!", 
-                    emailsSent = studentsInCohort.Count,
-                    cohort = payload.Formation
-                });
+                return Ok(new { message = "Exam scheduled successfully!", emailsSent = studentsInCohort.Count });
             }
             catch (Exception ex)
             {
-                // On ne bloque pas la planification de l'examen si l'email échoue, mais on prévient
                 return StatusCode(500, new { message = "Exam scheduled, but failed to send some emails.", error = ex.Message });
             }
         }
 
-        // --- 7. THE SHUFFLER ENGINE ---
-        [HttpGet("generate/{examId}/student/{studentId}")]
-        public IActionResult GenerateStudentExam(int examId, string studentId)
+        // 🛡️ NOUVEAU : EXAMENS DISPONIBLES (Vérifie si déjà soumis)
+        [HttpGet("available/{cohort}/{studentEmail}")]
+        public IActionResult GetAvailableExams(string cohort, string studentEmail)
         {
-            if (examId < 0 || examId >= _scheduledExams.Count) return NotFound(new { message = "Exam not found." });
-            var scheduledExam = _scheduledExams[examId];
+            var submittedExamIds = _context.ExamResults.Where(er => er.StudentEmail == studentEmail).Select(er => er.ExamId).ToList();
+            var exams = _scheduledExams.Where(e => e.Formation == cohort).Select(e => new {
+                id = e.Id, title = e.Title, scheduledFor = e.ScheduledFor, durationMinutes = e.DurationMinutes,
+                isCompleted = submittedExamIds.Contains(e.Id)
+            });
+            return Ok(exams);
+        }
+
+        // 🛡️ NOUVEAU : GÉNÉRER EXAMEN (Bloque si déjà soumis)
+        [HttpGet("generate/{examId}/student/{studentEmail}")]
+        public IActionResult GenerateStudentExam(int examId, string studentEmail)
+        {
+            if (_context.ExamResults.Any(er => er.ExamId == examId && er.StudentEmail == studentEmail))
+                return BadRequest(new { message = "Tentative de fraude : Vous avez déjà soumis cet examen." });
+
+            var scheduledExam = _scheduledExams.FirstOrDefault(e => e.Id == examId);
+            if (scheduledExam == null) return NotFound(new { message = "Examen introuvable." });
 
             var bank = _questionBanks.FirstOrDefault(b => b.Id == scheduledExam.SourceBankId);
-            if (bank == null) return NotFound(new { message = "Source Question Bank not found." });
+            if (bank == null) return NotFound(new { message = "Banque de questions introuvable." });
 
             var randomizedQuestions = bank.Questions.OrderBy(q => Guid.NewGuid()).Take(scheduledExam.QuestionsToPull).ToList();
-            var safeExamVersion = new List<StudentQuestionDto>();
+            var safeExamVersion = randomizedQuestions.Select((q, index) => new StudentQuestionDto {
+                QuestionId = index + 1, Text = q.Text, Options = q.Options
+            }).ToList();
+
+            return Ok(new { ExamTitle = scheduledExam.Title, Duration = scheduledExam.DurationMinutes, Questions = safeExamVersion });
+        }
+
+        // 🛡️ NOUVEAU : SOUMISSION ET CALCUL DU SCORE
+        [HttpPost("submit")]
+        public async Task<IActionResult> SubmitExam([FromBody] ExamSubmissionDto submission)
+        {
+            if (await _context.ExamResults.AnyAsync(er => er.ExamId == submission.ExamId && er.StudentEmail == submission.StudentEmail))
+                return BadRequest(new { message = "Examen déjà soumis." });
+
+            var scheduledExam = _scheduledExams.FirstOrDefault(e => e.Id == submission.ExamId);
+            var bank = _questionBanks.FirstOrDefault(b => b.Id == scheduledExam.SourceBankId);
             
-            for (int i = 0; i < randomizedQuestions.Count; i++)
+            int score = 0;
+            if (submission.Answers != null && bank != null)
             {
-                safeExamVersion.Add(new StudentQuestionDto {
-                    QuestionId = i + 1, Text = randomizedQuestions[i].Text, Options = randomizedQuestions[i].Options
-                });
+                foreach(var answer in submission.Answers)
+                {
+                    var question = bank.Questions[answer.Key - 1]; 
+                    if (question.CorrectAnswerIndex == answer.Value) score++;
+                }
             }
 
-            return Ok(new {
-                ExamTitle = scheduledExam.Title, StudentId = studentId, Duration = scheduledExam.DurationMinutes, Questions = safeExamVersion
-            });
+            var result = new ExamResult {
+                ExamId = submission.ExamId, StudentEmail = submission.StudentEmail, Score = score, SubmittedAt = DateTime.Now
+            };
+
+            _context.ExamResults.Add(result);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Examen enregistré avec succès !", score = score });
         }
     }
 }

@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using SecureExam.API.Data;
 
@@ -10,9 +11,11 @@ using SecureExam.API.Data;
 namespace SecureExam.API.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260323222246_AddExamResultsTable")]
+    partial class AddExamResultsTable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -23,19 +26,22 @@ namespace SecureExam.API.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
-                    b.Property<DateTime>("CreatedAt")
+                    b.Property<double>("AverageDwellTime")
+                        .HasColumnType("REAL");
+
+                    b.Property<double>("AverageFlightTime")
+                        .HasColumnType("REAL");
+
+                    b.Property<string>("ReferenceSentence")
+                        .IsRequired()
                         .HasColumnType("TEXT");
-
-                    b.Property<double>("MeanDwell")
-                        .HasColumnType("REAL");
-
-                    b.Property<double>("MeanFlight")
-                        .HasColumnType("REAL");
 
                     b.Property<int>("UserId")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("UserId");
 
                     b.ToTable("BaselineSignatures");
                 });
@@ -142,6 +148,17 @@ namespace SecureExam.API.Migrations
                         .IsUnique();
 
                     b.ToTable("Users");
+                });
+
+            modelBuilder.Entity("SecureExam.API.Models.BaselineSignature", b =>
+                {
+                    b.HasOne("SecureExam.API.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("SecureExam.API.Models.ExamSession", b =>

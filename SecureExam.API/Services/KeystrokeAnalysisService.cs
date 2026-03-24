@@ -1,47 +1,53 @@
 using SecureExam.API.DTOs;
 using SecureExam.API.Models;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace SecureExam.API.Services
 {
     public class KeystrokeAnalysisService
     {
-       private const double ANOMALY_THRESHOLD = 4.0; 
-
-    // On donne à l'utilisateur le droit de varier naturellement de 45ms sur le maintien de la touche
-    private const double STD_DEV_DWELL = 45.0; 
-    
-    // Et de 65ms sur le temps de vol (les transitions d'un doigt à l'autre sont toujours plus instables)
-    private const double STD_DEV_FLIGHT = 65.0;
-
-        public bool IsAnomalyDetected(List<KeystrokeDataDto> currentKeystrokes, BaselineSignature baseline, out double anomalyScore)
+        public bool IsAnomalyDetected(List<KeystrokeDataDto> events, BaselineSignature baseline, out double score)
         {
-            if (currentKeystrokes == null || currentKeystrokes.Count == 0)
+            // 1. Calculer les moyennes du test actuel (Même logique que le contrôleur)
+            var keydowns = events.Where(e => e.Type == "keydown").ToList();
+            var keyups = events.Where(e => e.Type == "keyup").ToList();
+
+            double totalDwell = 0;
+            int dwellCount = 0;
+            foreach (var down in keydowns)
             {
-                anomalyScore = 0;
-                return false;
+                var up = keyups.FirstOrDefault(u => u.Key == down.Key && u.Timestamp > down.Timestamp);
+                if (up != null)
+                {
+                    totalDwell += (up.Timestamp - down.Timestamp);
+                    dwellCount++;
+                }
             }
 
-            // 1. Calcul des moyennes actuelles (x_i) avec nettoyage des pauses de réflexion
-            double currentAvgDwell = currentKeystrokes.Average(k => k.DwellTime);
+            double totalFlight = 0;
+            int flightCount = 0;
+            for (int i = 0; i < keydowns.Count - 1; i++)
+            {
+                var currentUp = keyups.FirstOrDefault(u => u.Key == keydowns[i].Key && u.Timestamp > keydowns[i].Timestamp);
+                if (currentUp != null)
+                {
+                    totalFlight += (keydowns[i + 1].Timestamp - currentUp.Timestamp);
+                    flightCount++;
+                }
+            }
 
-            var validFlights = currentKeystrokes
-                .Where(k => k.FlightTime >= 0 && k.FlightTime < 1000)
-                .ToList();
+            double currentDwell = dwellCount > 0 ? totalDwell / dwellCount : 0;
+            double currentFlight = flightCount > 0 ? totalFlight / flightCount : 0;
 
-            // Si l'étudiant a fait beaucoup de pauses et qu'on a filtré toutes les touches,
-            // on utilise sa moyenne de base temporairement pour ne pas fausser le score.
-            double currentAvgFlight = validFlights.Any() 
-                ? validFlights.Average(k => k.FlightTime) 
-                : baseline.AverageFlightTime;
+            // 2. Calculer la distance euclidienne par rapport à la baseline de la DB
+            // Note: Assure-toi que ton modèle BaselineSignature a bien MeanDwell et MeanFlight
+            score = Math.Sqrt(Math.Pow(currentDwell - baseline.MeanDwell, 2) + Math.Pow(currentFlight - baseline.MeanFlight, 2));
 
-            // 2. Application de la formule de distance (Z-score euclidien) de tes slides
-            double dwellZScore = (currentAvgDwell - baseline.AverageDwellTime) / STD_DEV_DWELL;
-            double flightZScore = (currentAvgFlight - baseline.AverageFlightTime) / STD_DEV_FLIGHT;
-
-            anomalyScore = Math.Sqrt(Math.Pow(dwellZScore, 2) + Math.Pow(flightZScore, 2));
-
-            // 3. Vérification par rapport au seuil
-            return anomalyScore > ANOMALY_THRESHOLD;
+            // Seuil d'anomalie (Threshold)
+            double threshold = 65.0; 
+            return score > threshold;
         }
     }
 }

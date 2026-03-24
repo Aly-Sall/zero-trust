@@ -3,10 +3,16 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using SecureExam.API.Data;
 using SecureExam.API.Models;
-using SecureExam.API.Services; // 👈 INDISPENSABLE POUR L'EMAIL
+using SecureExam.API.Services;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Microsoft.AspNetCore.Http; 
+using System.IO; 
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using System.Linq;
 
 namespace SecureExam.API.Controllers
 {
@@ -30,9 +36,8 @@ namespace SecureExam.API.Controllers
     {
         private readonly AppDbContext _context;
         private readonly IConfiguration _configuration;
-        private readonly IEmailService _emailService; // 👈 LE SERVICE D'EMAIL EST LÀ
+        private readonly IEmailService _emailService;
 
-        // Le constructeur qui charge la Base de Données, la Config et l'Email
         public AuthController(AppDbContext context, IConfiguration configuration, IEmailService emailService)
         {
             _context = context;
@@ -55,7 +60,6 @@ namespace SecureExam.API.Controllers
         [HttpPost("register")]
         public async Task<IActionResult> Register(RegisterDto request)
         {
-            // Vérifie si l'utilisateur existe déjà
             if (await _context.Users.AnyAsync(u => u.Email == request.Email))
                 return BadRequest("Cet email est déjà utilisé.");
 
@@ -70,19 +74,80 @@ namespace SecureExam.API.Controllers
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
 
-            // 🚀 ENVOI DE L'EMAIL (Avec protection anti-crash)
             try 
             {
-                // On passe bien les 4 paramètres, y compris request.Cohort !
                 await _emailService.SendCredentialsEmailAsync(request.Email, request.Password, request.Role, request.Cohort);
             }
             catch (Exception ex)
             {
-                // Si le mail échoue (ex: mauvais mot de passe Gmail), ça l'écrit dans le terminal mais ça ne bloque pas la création !
                 Console.WriteLine($"⚠️ ERREUR D'ENVOI EMAIL : {ex.Message}");
             }
 
             return Ok(new { message = "Utilisateur créé avec succès !" });
+        }
+
+        // 🚀 MÉTHODE D'IMPORTATION CSV EN MASSE (Gère , et ;)
+        [HttpPost("import")]
+        public async Task<IActionResult> ImportUsers(IFormFile file)
+        {
+            if (file == null || file.Length == 0) return BadRequest("Fichier CSV vide.");
+
+            var usersAdded = 0;
+            var errors = new List<string>();
+
+            using var stream = new StreamReader(file.OpenReadStream());
+            var isFirstLine = true;
+
+            while (!stream.EndOfStream)
+            {
+                var line = await stream.ReadLineAsync();
+                if (string.IsNullOrWhiteSpace(line)) continue;
+
+                // 🛠️ LA CORRECTION EST ICI : On coupe sur la virgule ET le point-virgule
+                var values = line.Split(new[] { ',', ';' });
+
+                // Ignore l'en-tête du fichier CSV
+                if (isFirstLine) {
+                    isFirstLine = false;
+                    if (values[0].ToLower().Contains("email")) continue;
+                }
+
+                if (values.Length >= 1)
+                {
+                    var email = values[0].Trim();
+                    var role = values.Length > 1 && !string.IsNullOrWhiteSpace(values[1]) ? values[1].Trim() : "Student";
+                    var cohort = values.Length > 2 ? values[2].Trim() : null;
+
+                    if (!await _context.Users.AnyAsync(u => u.Email == email))
+                    {
+                        var tempPassword = "Temp" + Guid.NewGuid().ToString().Substring(0, 6) + "!";
+                        
+                        var user = new User
+                        {
+                            Email = email,
+                            Role = role,
+                            Cohort = role == "Student" ? cohort : null,
+                            PasswordHash = BCrypt.Net.BCrypt.HashPassword(tempPassword)
+                        };
+
+                        _context.Users.Add(user);
+                        
+                        try 
+                        {
+                            await _emailService.SendCredentialsEmailAsync(email, tempPassword, role, cohort);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Erreur d'email pour {email} : {ex.Message}");
+                            errors.Add(email);
+                        }
+                        usersAdded++;
+                    }
+                }
+            }
+
+            await _context.SaveChangesAsync();
+            return Ok(new { message = $"{usersAdded} utilisateurs provisionnés avec succès !", emailErrors = errors });
         }
 
         [HttpGet("users")]

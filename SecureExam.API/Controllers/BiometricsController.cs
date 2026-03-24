@@ -1,16 +1,17 @@
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SecureExam.API.Data;
 using SecureExam.API.DTOs;
 using SecureExam.API.Models;
-using System.Security.Claims;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace SecureExam.API.Controllers
 {
-    [Route("api/[controller]")]
     [ApiController]
-    [Authorize] // Il faut être connecté pour calibrer sa signature
+    [Route("api/[controller]")]
     public class BiometricsController : ControllerBase
     {
         private readonly AppDbContext _context;
@@ -20,59 +21,88 @@ namespace SecureExam.API.Controllers
             _context = context;
         }
 
-        [HttpPost("calibrate")]
-        public async Task<IActionResult> Calibrate([FromBody] List<KeystrokeDataDto> keystrokes)
+        private (double Dwell, double Flight) ExtractFeatures(List<KeystrokeDataDto> events)
         {
-            // 1. On identifie l'utilisateur via son Token JWT
-            var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (!int.TryParse(userIdString, out int userId)) return Unauthorized();
+            if (events == null || !events.Any()) return (0, 0);
 
-            if (keystrokes == null || keystrokes.Count == 0)
-                return BadRequest("Aucune donnée de frappe reçue.");
+            var keydowns = events.Where(e => e.Type == "keydown").ToList();
+            var keyups = events.Where(e => e.Type == "keyup").ToList();
 
-           // 2. DATA SCIENCE : Calcul des vraies moyennes (avec nettoyage des valeurs aberrantes)
-            double avgDwell = keystrokes.Average(k => k.DwellTime);
+            double totalDwell = 0;
+            int dwellCount = 0;
 
-            // On filtre : on ne garde que les temps de vol inférieurs à 1 seconde (1000 ms)
-            var validFlightTimes = keystrokes
-                .Where(k => k.FlightTime >= 0 && k.FlightTime < 1000)
-                .Select(k => k.FlightTime)
-                .ToList();
+            foreach (var down in keydowns)
+            {
+                var up = keyups.FirstOrDefault(u => u.Key == down.Key && u.Timestamp > down.Timestamp);
+                if (up != null)
+                {
+                    totalDwell += (up.Timestamp - down.Timestamp);
+                    dwellCount++;
+                }
+            }
 
-            // Si le tableau est vide (ex: il n'a tapé qu'une lettre), on met 0 pour éviter une erreur de division
-            double avgFlight = validFlightTimes.Any() ? validFlightTimes.Average() : 0;
+            double totalFlight = 0;
+            int flightCount = 0;
 
-            // 3. On cherche s'il a déjà une signature en base
-            var baseline = await _context.BaselineSignatures.FirstOrDefaultAsync(b => b.UserId == userId);
-            
+            for (int i = 0; i < keydowns.Count - 1; i++)
+            {
+                var currentUp = keyups.FirstOrDefault(u => u.Key == keydowns[i].Key && u.Timestamp > keydowns[i].Timestamp);
+                if (currentUp != null)
+                {
+                    totalFlight += (keydowns[i + 1].Timestamp - currentUp.Timestamp);
+                    flightCount++;
+                }
+            }
+
+            return (dwellCount > 0 ? totalDwell / dwellCount : 0, 
+                    flightCount > 0 ? totalFlight / flightCount : 0);
+        }
+
+        [HttpPost("calibrate")]
+        public async Task<IActionResult> Calibrate([FromBody] BiometricPayload payload)
+        {
+            var features = ExtractFeatures(payload.Events);
+
+            // Recherche de l'utilisateur
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == payload.StudentEmail);
+            if (user == null) return BadRequest(new { message = "User not found." });
+
+            // Sauvegarde en Base de Données
+            var baseline = await _context.BaselineSignatures.FirstOrDefaultAsync(b => b.UserId == user.Id);
             if (baseline == null)
             {
-                // S'il n'en a pas, on la crée
-                baseline = new BaselineSignature
-                {
-                    UserId = userId,
-                    ReferenceSentence = "La sécurité Zero-Trust est essentielle.",
-                    AverageDwellTime = avgDwell,
-                    AverageFlightTime = avgFlight
-                };
+                baseline = new BaselineSignature { UserId = user.Id };
                 _context.BaselineSignatures.Add(baseline);
             }
-            else
-            {
-                // S'il refait la calibration, on met à jour ses données
-                baseline.AverageDwellTime = avgDwell;
-                baseline.AverageFlightTime = avgFlight;
-                _context.BaselineSignatures.Update(baseline);
-            }
+
+            baseline.MeanDwell = features.Dwell;
+            baseline.MeanFlight = features.Flight;
+            baseline.CreatedAt = DateTime.UtcNow;
 
             await _context.SaveChangesAsync();
 
-            return Ok(new 
-            { 
-                message = "Signature biométrique enregistrée avec succès !", 
-                dwell = avgDwell, 
-                flight = avgFlight 
-            });
+            return Ok(new { message = "Biometric signature securely saved to database.", dwell = features.Dwell, flight = features.Flight });
+        }
+
+        [HttpPost("verify")]
+        public async Task<IActionResult> Verify([FromBody] BiometricPayload payload)
+        {
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == payload.StudentEmail);
+            if (user == null) return BadRequest(new { message = "User not found." });
+
+            var baseline = await _context.BaselineSignatures.FirstOrDefaultAsync(b => b.UserId == user.Id);
+            if (baseline == null) return BadRequest(new { message = "No baseline found for this user." });
+
+            var current = ExtractFeatures(payload.Events);
+
+            // Calcul de la distance euclidienne
+            double distance = Math.Sqrt(Math.Pow(current.Dwell - baseline.MeanDwell, 2) + Math.Pow(current.Flight - baseline.MeanFlight, 2));
+
+            // Si la distance est sous le seuil de 65ms, l'identité est validée
+            if (distance <= 65.0) 
+                return Ok(new { success = true, distance });
+            
+            return BadRequest(new { success = false, message = "Identity Mismatch: Biometric profile does not match.", distance });
         }
     }
 }

@@ -1,328 +1,319 @@
-import { useEffect, useState } from "react";
-import * as signalR from "@microsoft/signalr";
+import { useState, useEffect } from "react";
+import { HubConnectionBuilder, LogLevel } from "@microsoft/signalr"; // 📡 AJOUT : Import SignalR
 import api from "../api/axiosConfig";
+import ScheduleExamModal from "../../components/ScheduleExamModal/ScheduleExamModal";
 
 export default function ProfessorDashboard() {
-  // --- ÉTATS DU MONITORING (SIGNALR) ---
-  const [alerts, setAlerts] = useState([]);
-  const [connectionStatus, setConnectionStatus] = useState("Connecting...");
-
-  // --- ÉTATS DES EXAMENS ---
   const [banks, setBanks] = useState([]);
-  const [scheduleForm, setScheduleForm] = useState({
-    title: "Examen Cybersécurité - Final",
-    formation: "Cyber-2026", // La fameuse cohorte !
-    scheduledFor: "",
-    durationMinutes: 60,
-    sourceBankId: "",
-    questionsToPull: 3,
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [showManualForm, setShowManualForm] = useState(false);
+
+  // 📡 AJOUT : État pour le radar de sécurité
+  const [liveAlerts, setLiveAlerts] = useState([]);
+
+  // State for manual creation
+  const [manualBank, setManualBank] = useState({
+    course: "",
+    folderName: "",
+    questions: [{ text: "", options: ["", "", "", ""], correctAnswerIndex: 0 }],
   });
 
-  // 1. Charger les banques de questions au démarrage
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/immutability
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     fetchBanks();
+  }, []);
+
+  // 📡 AJOUT : Écoute des alertes via WebSocket (SignalR)
+  useEffect(() => {
+    // ⚠️ Remplace '7194' par le port de ton backend C# si nécessaire
+    const hubConnection = new HubConnectionBuilder()
+      .withUrl("https://localhost:7194/monitoringHub")
+      .configureLogging(LogLevel.Information)
+      .withAutomaticReconnect()
+      .build();
+
+    hubConnection
+      .start()
+      .then(() => console.log("📡 Connected to Security Hub!"))
+      .catch((err) => console.error("SignalR Connection Error: ", err));
+
+    hubConnection.on("ReceiveAlert", (alertData) => {
+      console.log("🚨 ALERTE REÇUE :", alertData);
+      setLiveAlerts((prevAlerts) => [alertData, ...prevAlerts]);
+    });
+
+    return () => {
+      hubConnection.stop();
+    };
   }, []);
 
   const fetchBanks = async () => {
     try {
       const res = await api.get("/Exams/banks");
       setBanks(res.data);
-      if (res.data.length > 0) {
-        setScheduleForm((prev) => ({ ...prev, sourceBankId: res.data[0].id }));
-      }
     } catch (err) {
-      console.error("Erreur chargement des banques", err);
+      console.error("Error fetching banks", err);
     }
   };
 
-  // 2. Connexion au serveur de Monitoring (WebSocket)
-  useEffect(() => {
-    const newConnection = new signalR.HubConnectionBuilder()
-      .withUrl("http://localhost:5162/monitoringHub", {
-        skipNegotiation: true,
-        transport: signalR.HttpTransportType.WebSockets,
-      })
-      .withAutomaticReconnect()
-      .build();
-
-    newConnection
-      .start()
-      .then(() => {
-        setConnectionStatus("🟢 Connected to AI Monitoring (Live)");
-        newConnection.on("ReceiveAlert", (alertData) => {
-          setAlerts((prevAlerts) => [alertData, ...prevAlerts]);
-        });
-      })
-      .catch(() => setConnectionStatus("🔴 Server offline"));
-
-    return () => newConnection && newConnection.stop();
-  }, []);
-
-  // 3. Bouton "Triche" pour la démo : Créer une banque rapidement
-  const handleQuickCreateBank = async () => {
-    const mockBank = {
-      folderName: "Network Security & AI",
-      course: "Cybersecurity",
+  const addQuestion = () => {
+    setManualBank({
+      ...manualBank,
       questions: [
-        {
-          text: "What is the core principle of a Zero-Trust architecture?",
-          options: [
-            "Always trust the local network",
-            "Never trust, always verify",
-            "Rely exclusively on VPNs",
-          ],
-          correctAnswerIndex: 1,
-        },
-        {
-          text: "What is the primary purpose of a biometric system during a secure exam?",
-          options: [
-            "To enhance the user interface graphics",
-            "To provide continuous identity authentication",
-            "To automatically calculate the final grade",
-          ],
-          correctAnswerIndex: 1,
-        },
-        {
-          text: "What does the AI monitoring system actively detect during a session?",
-          options: [
-            "Identity spoofing and behavioral anomalies",
-            "Changes in local weather conditions",
-            "The device's battery level",
-          ],
-          correctAnswerIndex: 0,
-        },
+        ...manualBank.questions,
+        { text: "", options: ["", "", "", ""], correctAnswerIndex: 0 },
       ],
-    };
-    try {
-      await api.post("/Exams/banks", mockBank);
-      alert("✅ Banque d'examen créée !");
-      fetchBanks();
-      // eslint-disable-next-line no-unused-vars
-    } catch (err) {
-      alert("Erreur lors de la création.");
-    }
+    });
   };
 
-  // 4. Planifier l'examen (et envoyer les emails !)
-  const handleSchedule = async (e) => {
+  const handleQuestionChange = (index, field, value) => {
+    const newQuestions = [...manualBank.questions];
+    newQuestions[index][field] = value;
+    setManualBank({ ...manualBank, questions: newQuestions });
+  };
+
+  const handleOptionChange = (qIndex, oIndex, value) => {
+    const newQuestions = [...manualBank.questions];
+    newQuestions[qIndex].options[oIndex] = value;
+    setManualBank({ ...manualBank, questions: newQuestions });
+  };
+
+  const handleManualSubmit = async (e) => {
     e.preventDefault();
-    if (!scheduleForm.sourceBankId || !scheduleForm.scheduledFor) {
-      return alert("Veuillez sélectionner une banque et une date.");
-    }
     try {
-      const res = await api.post("/Exams/schedule", scheduleForm);
-      alert(
-        `✅ Examen planifié ! ${res.data.emailsSent} emails de notification ont été envoyés aux étudiants.`,
-      );
+      await api.post("/Exams/banks", manualBank);
+      alert("✅ Question bank created successfully!");
+      setShowManualForm(false);
+      fetchBanks();
+      setManualBank({
+        course: "",
+        folderName: "",
+        questions: [
+          { text: "", options: ["", "", "", ""], correctAnswerIndex: 0 },
+        ],
+      });
       // eslint-disable-next-line no-unused-vars
     } catch (err) {
-      alert("Erreur lors de la planification.");
+      alert("Error during creation.");
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#0d1117] p-8 text-white font-sans">
-      <div className="max-w-7xl mx-auto space-y-8">
-        {/* HEADER */}
+    <div className="min-h-screen bg-[#0d1117] text-white p-8">
+      <div className="max-w-6xl mx-auto space-y-8">
         <div className="flex justify-between items-center border-b border-gray-800 pb-4">
-          <h1 className="text-3xl font-bold flex items-center gap-3">
-            <span className="text-blue-500">👨‍🏫</span> Professor Control Center
+          <h1 className="text-3xl font-bold text-blue-500">
+            👨‍🏫 Professor Workspace
           </h1>
-          <span
-            className={`px-4 py-2 rounded-full text-sm font-bold shadow-lg ${
-              connectionStatus.includes("🟢")
-                ? "bg-green-900/40 text-green-400 border border-green-500/50"
-                : "bg-red-900/40 text-red-400 border border-red-500/50"
-            }`}
-          >
-            {connectionStatus}
-          </span>
+          <div className="flex gap-4">
+            <button
+              onClick={() => setShowManualForm(!showManualForm)}
+              className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-6 rounded-lg transition-all"
+            >
+              {showManualForm ? "Cancel" : "➕ Create a Bank"}
+            </button>
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-6 rounded-lg transition-all"
+            >
+              📅 Schedule an Exam
+            </button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* COLONNE GAUCHE : GESTION DES EXAMENS */}
-          <div className="space-y-8">
-            {/* Repo Questions */}
-            <div className="bg-[#161b22] border border-gray-700 p-6 rounded-xl shadow-xl">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-bold text-blue-400">
-                  📚 Exam Repository
-                </h2>
-                <button
-                  onClick={handleQuickCreateBank}
-                  className="text-sm bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded transition-colors border border-gray-600"
-                >
-                  + Add Demo Bank
-                </button>
-              </div>
+        {/* 🚨 AJOUT : SOC - LIVE SECURITY FEED */}
+        <div className="bg-[#161b22] border-2 border-red-900/50 rounded-xl p-8 shadow-[0_0_30px_rgba(220,38,38,0.1)]">
+          <h2 className="text-xl font-bold mb-6 text-red-500 flex items-center gap-3 border-b border-gray-800 pb-3">
+            <span className="relative flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+            </span>
+            Live Exam Monitoring (SOC)
+          </h2>
 
-              {banks.length === 0 ? (
-                <p className="text-gray-500 italic">
-                  Aucune banque de questions. Utilisez le bouton pour en générer
-                  une.
-                </p>
-              ) : (
-                <ul className="space-y-3">
-                  {banks.map((b) => (
-                    <li
-                      key={b.id}
-                      className="bg-[#0d1117] p-3 rounded border border-gray-700 flex justify-between"
-                    >
-                      <span className="font-bold">{b.folderName}</span>
-                      <span className="text-gray-400 text-sm">
-                        {b.totalQuestions} Qs
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+          {liveAlerts.length === 0 ? (
+            <div className="p-6 text-center text-gray-500 italic bg-black/20 rounded-lg border border-dashed border-gray-700">
+              ✅ No security breaches detected. All active exam sessions are
+              secure.
             </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-700 text-gray-400 text-sm">
+                    <th className="pb-3 pl-4">Time</th>
+                    <th className="pb-3">Session ID</th>
+                    <th className="pb-3">Infraction Type</th>
+                    <th className="pb-3 text-right pr-4">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800">
+                  {liveAlerts.map((alert, index) => (
+                    <tr
+                      key={index}
+                      className="bg-red-900/10 hover:bg-red-900/20 transition-colors animate-pulse"
+                    >
+                      <td className="py-4 pl-4 font-mono text-gray-300">
+                        {alert.time}
+                      </td>
+                      <td className="py-4 font-mono text-blue-400">
+                        #{alert.sessionId}
+                      </td>
+                      <td className="py-4 font-bold text-red-400 flex items-center gap-2">
+                        ⚠️ {alert.type}
+                      </td>
+                      <td className="py-4 text-right pr-4">
+                        <button className="bg-red-600/20 text-red-500 border border-red-600/50 px-4 py-1.5 rounded-lg text-sm hover:bg-red-600 hover:text-white transition-all font-bold">
+                          Lock Exam
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
 
-            {/* Planification d'Examen */}
-            <div className="bg-[#161b22] border border-gray-700 p-6 rounded-xl shadow-xl">
-              <h2 className="text-xl font-bold mb-6 text-purple-400">
-                📅 Schedule New Exam
-              </h2>
-              <form onSubmit={handleSchedule} className="space-y-4">
+        {/* FORMULAIRE MANUEL (Ton code d'origine) */}
+        {showManualForm && (
+          <div className="bg-[#161b22] border border-gray-700 p-8 rounded-xl shadow-2xl">
+            <h2 className="text-2xl font-bold mb-6 text-blue-400">
+              New Question Bank
+            </h2>
+            <form onSubmit={handleManualSubmit} className="space-y-6">
+              <div className="grid grid-cols-2 gap-4">
                 <input
                   type="text"
-                  className="w-full bg-[#0d1117] border border-gray-600 p-3 rounded"
-                  value={scheduleForm.title}
-                  onChange={(e) =>
-                    setScheduleForm({ ...scheduleForm, title: e.target.value })
-                  }
-                  placeholder="Titre de l'examen"
+                  placeholder="Course (e.g., Cryptography)"
                   required
+                  className="bg-[#0d1117] border border-gray-600 p-3 rounded text-white"
+                  value={manualBank.course}
+                  onChange={(e) =>
+                    setManualBank({ ...manualBank, course: e.target.value })
+                  }
                 />
+                <input
+                  type="text"
+                  placeholder="Folder Name (e.g., Final Exam 2026)"
+                  required
+                  className="bg-[#0d1117] border border-gray-600 p-3 rounded text-white"
+                  value={manualBank.folderName}
+                  onChange={(e) =>
+                    setManualBank({ ...manualBank, folderName: e.target.value })
+                  }
+                />
+              </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm text-gray-400 mb-1 block">
-                      Cohorte (Cible)
-                    </label>
+              <div className="space-y-8">
+                {manualBank.questions.map((q, qIndex) => (
+                  <div
+                    key={qIndex}
+                    className="p-6 bg-[#0d1117] border border-gray-700 rounded-lg space-y-4"
+                  >
+                    <div className="flex justify-between">
+                      <h3 className="text-lg font-bold">
+                        Question {qIndex + 1}
+                      </h3>
+                    </div>
                     <input
                       type="text"
-                      className="w-full bg-[#0d1117] border border-gray-600 p-3 rounded text-green-400 font-bold"
-                      value={scheduleForm.formation}
-                      onChange={(e) =>
-                        setScheduleForm({
-                          ...scheduleForm,
-                          formation: e.target.value,
-                        })
-                      }
-                      placeholder="Ex: Cyber-2026"
+                      placeholder="Question text"
                       required
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm text-gray-400 mb-1 block">
-                      Date & Heure
-                    </label>
-                    <input
-                      type="datetime-local"
-                      className="w-full bg-[#0d1117] border border-gray-600 p-3 rounded [color-scheme:dark]"
-                      value={scheduleForm.scheduledFor}
+                      className="w-full bg-[#161b22] border border-gray-600 p-2 rounded text-white"
+                      value={q.text}
                       onChange={(e) =>
-                        setScheduleForm({
-                          ...scheduleForm,
-                          scheduledFor: e.target.value,
-                        })
+                        handleQuestionChange(qIndex, "text", e.target.value)
                       }
-                      required
                     />
+                    <div className="grid grid-cols-2 gap-4">
+                      {q.options.map((opt, oIndex) => (
+                        <div key={oIndex} className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            name={`correct-${qIndex}`}
+                            checked={q.correctAnswerIndex === oIndex}
+                            onChange={() =>
+                              handleQuestionChange(
+                                qIndex,
+                                "correctAnswerIndex",
+                                oIndex,
+                              )
+                            }
+                          />
+                          <input
+                            type="text"
+                            placeholder={`Option ${oIndex + 1}`}
+                            required
+                            className="w-full bg-[#161b22] border border-gray-600 p-2 rounded text-sm text-white"
+                            value={opt}
+                            onChange={(e) =>
+                              handleOptionChange(qIndex, oIndex, e.target.value)
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                ))}
+              </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <select
-                    className="w-full bg-[#0d1117] border border-gray-600 p-3 rounded"
-                    value={scheduleForm.sourceBankId}
-                    onChange={(e) =>
-                      setScheduleForm({
-                        ...scheduleForm,
-                        sourceBankId: e.target.value,
-                      })
-                    }
-                  >
-                    {banks.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.folderName}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="number"
-                    className="w-full bg-[#0d1117] border border-gray-600 p-3 rounded"
-                    value={scheduleForm.questionsToPull}
-                    onChange={(e) =>
-                      setScheduleForm({
-                        ...scheduleForm,
-                        questionsToPull: e.target.value,
-                      })
-                    }
-                    placeholder="Nombre de Qs à tirer"
-                    required
-                  />
-                </div>
-
+              <div className="flex justify-between pt-4">
+                <button
+                  type="button"
+                  onClick={addQuestion}
+                  className="text-blue-400 hover:text-blue-300 font-bold"
+                >
+                  + Add another question
+                </button>
                 <button
                   type="submit"
-                  className="w-full bg-blue-600 hover:bg-blue-500 font-bold py-3 rounded-lg shadow-lg transition-colors mt-4"
+                  className="bg-blue-600 hover:bg-blue-500 px-10 py-3 rounded-xl font-bold"
                 >
-                  🚀 Launch Exam & Notify Students
+                  Save Bank
                 </button>
-              </form>
-            </div>
+              </div>
+            </form>
           </div>
+        )}
 
-          {/* COLONNE DROITE : LIVE MONITORING (Ton code SignalR) */}
-          <div className="bg-[#161b22] border border-gray-700 rounded-xl overflow-hidden shadow-2xl h-[800px] flex flex-col">
-            <div className="p-6 border-b border-gray-700 bg-gray-900/50">
-              <h2 className="text-xl font-bold text-red-400 flex items-center gap-2">
-                🚨 Live Security Feeds
-              </h2>
-              <p className="text-sm text-gray-400 mt-1">
-                Détection IA des anomalies en temps réel
-              </p>
-            </div>
-
-            <div className="p-4 bg-black/40 border-b border-gray-700 font-semibold text-gray-400 grid grid-cols-4 gap-4 text-sm">
-              <div>Time</div>
-              <div>Student ID</div>
-              <div>Alert Type</div>
-              <div>Threat Score</div>
-            </div>
-
-            <div className="divide-y divide-gray-800 overflow-y-auto flex-1 p-2">
-              {alerts.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-gray-500 italic">
-                  Aucune anomalie détectée. La session est sécurisée.
-                </div>
-              ) : (
-                alerts.map((alert, index) => (
-                  <div
-                    key={index}
-                    className="p-10 grid grid-cols-4 gap-4 items-center bg-red-900/10 hover:bg-red-900/30 transition-colors rounded mb-2 border border-red-900/30"
-                  >
-                    <div className="text-gray-400 text-sm">{alert.time}</div>
-                    <div className="font-mono text-white text-sm">
-                      #{alert.sessionId}
-                    </div>
-                    <div className="text-red-400 font-bold text-sm mr-7">
-                      ⚠️ {alert.type}
-                    </div>
-                    <div>
-                      <span className="font-mono text-red-200 bg-red-900 px-2 py-1 rounded text-xs border border-red-700">
-                        {alert.score.toFixed(2)}
-                      </span>
-                    </div>
+        {/* LIST OF BANKS */}
+        <div className="bg-[#161b22] border border-gray-700 p-6 rounded-xl shadow-xl">
+          <h2 className="text-xl font-bold mb-4">
+            📂 Available Question Banks
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {banks.length === 0 ? (
+              <p className="text-gray-500 italic">No banks available.</p>
+            ) : (
+              banks.map((b) => (
+                <div
+                  key={b.id}
+                  className="bg-[#0d1117] p-4 rounded-lg border border-gray-700 flex justify-between items-center"
+                >
+                  <div>
+                    <div className="font-bold">{b.course}</div>
+                    <div className="text-sm text-gray-400">{b.folderName}</div>
                   </div>
-                ))
-              )}
-            </div>
+                  <div className="text-blue-400 font-mono">
+                    {b.totalQuestions} Qs
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
+
+        {isModalOpen && (
+          <ScheduleExamModal
+            onClose={() => setIsModalOpen(false)}
+            onSuccess={() => {
+              setIsModalOpen(false);
+              fetchBanks();
+              alert("✅ Exam scheduled!");
+            }}
+          />
+        )}
       </div>
     </div>
   );
