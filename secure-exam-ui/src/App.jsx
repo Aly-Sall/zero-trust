@@ -17,11 +17,11 @@ import Navbar from "./components/Navbar";
 const Layout = ({ children }) => {
   const location = useLocation();
 
-  // 🛡️ ZERO-TRUST : On cache la barre sur le Login, l'Examen, ET la Calibration !
+  // 🛡️ CORRECTION : On utilise bien "/calibration"
   const hideNavbar =
     location.pathname === "/" ||
     location.pathname.startsWith("/exam") ||
-    location.pathname.startsWith("/calibrate");
+    location.pathname.startsWith("/calibration");
 
   return (
     <div className="min-h-screen bg-[#0d1117]">
@@ -67,9 +67,9 @@ function App() {
             }
           />
 
-          {/* 🛡️ ÉTAPE 1 : La porte d'entrée Biométrique */}
+          {/* 🛡️ CORRECTION : La porte d'entrée Biométrique avec le bon chemin */}
           <Route
-            path="/calibrate/:examId"
+            path="/calibration/:examId"
             element={
               <ProtectedRoute allowedRoles={["Student"]}>
                 <Calibration />

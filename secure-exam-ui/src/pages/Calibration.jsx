@@ -15,6 +15,7 @@ export default function Calibration() {
   const { handleKeyDown, handleKeyUp, getKeystrokeData, clearKeystrokeData } =
     useKeystrokeDynamics();
 
+  // La phrase exacte que l'étudiant doit taper
   const referenceSentence = "Zero-Trust security is essential.";
 
   const handleTextChange = (e) => {
@@ -22,6 +23,7 @@ export default function Calibration() {
   };
 
   const submitCalibration = async () => {
+    // Vérification stricte
     if (text !== referenceSentence) {
       setStatusMessage(
         "⚠️ Please type the sentence exactly as shown (respecting case and the final period).",
@@ -35,7 +37,7 @@ export default function Calibration() {
     try {
       setStatusMessage("⏳ Calculating your biometric signature...");
 
-      // 🚀 ENVOI CORRECT : L'email ET les événements
+      // Envoi du profil et des événements au backend
       const response = await api.post("/Biometrics/calibrate", {
         studentEmail: userProfile.email,
         events: events,
@@ -86,7 +88,7 @@ export default function Calibration() {
           disabled={isCalibrated}
           className="w-full h-24 bg-[#0d1117] border border-gray-600 rounded-lg p-4 text-white focus:outline-none focus:border-blue-500 resize-none mb-4 transition-colors disabled:opacity-50"
           placeholder="Type the sentence here..."
-          onPaste={(e) => e.preventDefault()}
+          onPaste={(e) => e.preventDefault()} // Interdit le copier/coller
         ></textarea>
 
         {statusMessage && (
@@ -136,7 +138,7 @@ export default function Calibration() {
             </>
           ) : (
             <button
-              onClick={() => navigate(`/exam/${examId}`)}
+              onClick={() => navigate(`/exam/${examId}`)} // 🚀 Envoie vers la VRAIE salle d'examen
               className="w-full py-4 bg-green-600 hover:bg-green-500 text-white font-bold rounded-lg text-lg shadow-[0_0_15px_rgba(34,197,94,0.3)] transition-all flex justify-center items-center gap-2"
             >
               Proceed to Exam Room ➔

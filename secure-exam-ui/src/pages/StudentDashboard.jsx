@@ -59,12 +59,12 @@ export default function StudentDashboard() {
                     </p>
                     <p>⏱️ Duration: {exam.durationMinutes} minutes</p>
                   </div>
-                  {/* 🚀 CHANGEMENT : Bypass de la calibration, on va direct à l'examen */}
+                  {/* 🚀 CORRECTION : On envoie d'abord vers la Calibration Biométrique ! */}
                   <button
-                    onClick={() => navigate(`/exam/${exam.id}`)}
-                    className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-lg transition-colors flex justify-center items-center gap-2"
+                    onClick={() => navigate(`/calibration/${exam.id}`)}
+                    className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg transition-colors flex justify-center items-center gap-2"
                   >
-                    🎓 Join Exam Room
+                    ⌨️ Biometric Enrollment
                   </button>
                 </div>
               ))}
