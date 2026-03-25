@@ -16,7 +16,7 @@ export default function ExamRoom() {
   const reportInfraction = useCallback(
     async (alertType) => {
       try {
-        // On envoie l'alerte au contrôleur C# (qui va déclencher SignalR)
+        // Envoi de la requête au backend
         await api.post(`/ExamSession/${examId}/lockdown-alert`, {
           alertType: alertType,
         });
@@ -38,27 +38,35 @@ export default function ExamRoom() {
     const handleCopyPaste = (e) => {
       e.preventDefault();
       reportInfraction("Copy/Paste Attempt");
-      alert(
-        "⚠️ Copy/Paste is strictly forbidden. The professor has been notified.",
-      );
+
+      // 🚀 ASTUCE : On retarde l'alerte de 100ms pour laisser la requête partir !
+      setTimeout(() => {
+        alert(
+          "⚠️ Copy/Paste is strictly forbidden. The professor has been notified.",
+        );
+      }, 100);
     };
 
     const handleVisibilityChange = () => {
       if (document.hidden) {
         reportInfraction("Tab Switch / Left Exam Screen");
-        alert(
-          "🚨 You left the exam screen! An integrity alert has been sent to the professor.",
-        );
+
+        // 🚀 ASTUCE : On retarde l'alerte pour ne pas bloquer le thread réseau
+        setTimeout(() => {
+          alert(
+            "🚨 You left the exam screen! An integrity alert has been sent to the professor.",
+          );
+        }, 100);
       }
     };
 
-    // Activation de la surveillance
+    // Activation des écoutes
     document.addEventListener("contextmenu", handleContextMenu);
     document.addEventListener("copy", handleCopyPaste);
     document.addEventListener("paste", handleCopyPaste);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
-    // Nettoyage à la sortie de la page
+    // Nettoyage
     return () => {
       document.removeEventListener("contextmenu", handleContextMenu);
       document.removeEventListener("copy", handleCopyPaste);
@@ -143,7 +151,6 @@ export default function ExamRoom() {
     }
   };
 
-  // --- ÉCRAN DE CHARGEMENT ---
   if (loading) {
     return (
       <div className="min-h-screen bg-[#0d1117] flex items-center justify-center">
@@ -164,7 +171,6 @@ export default function ExamRoom() {
 
   return (
     <div className="min-h-screen bg-[#0d1117] text-white p-6 font-sans select-none">
-      {/* 🛑 HEADER FIXE & TIMER */}
       <div className="fixed top-0 left-0 right-0 bg-[#161b22] border-b border-gray-800 p-4 flex justify-between items-center z-50 shadow-xl">
         <h1 className="text-xl font-bold text-gray-100 flex items-center gap-2">
           🛡️ {examData?.title}
@@ -181,7 +187,6 @@ export default function ExamRoom() {
       </div>
 
       <div className="max-w-4xl mx-auto pt-24 pb-20">
-        {/* 📝 CONTENEUR DE LA QUESTION */}
         <div className="bg-[#161b22] border border-gray-700 rounded-2xl p-8 shadow-2xl relative">
           <div className="absolute top-4 right-4 bg-gray-800 text-gray-400 px-3 py-1 rounded-full text-xs font-mono">
             Question {currentQuestionIndex + 1} / {totalQuestions}
@@ -222,7 +227,6 @@ export default function ExamRoom() {
           </div>
         </div>
 
-        {/* 🧭 BARRE DE NAVIGATION INFÉRIEURE */}
         <div className="fixed bottom-0 left-0 right-0 bg-[#161b22] border-t border-gray-800 p-4 z-50 shadow-dark-up">
           <div className="max-w-4xl mx-auto flex justify-between items-center">
             <button

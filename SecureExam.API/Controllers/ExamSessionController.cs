@@ -14,7 +14,6 @@ using System.Threading.Tasks;
 
 namespace SecureExam.API.Controllers
 {
-    // DTO pour recevoir les alertes matérielles, navigateur ou visuelles (IA)
     public class LockdownAlertDto
     {
         public string AlertType { get; set; } = string.Empty;
@@ -22,14 +21,17 @@ namespace SecureExam.API.Controllers
 
     [Route("api/[controller]")]
     [ApiController]
-    [Authorize] // Protégé par défaut pour tout le contrôleur
+    [Authorize]
     public class ExamSessionController : ControllerBase
     {
         private readonly AppDbContext _context;
+        // 📡 1. INJECTION DE SIGNALR DANS LE CONSTRUCTEUR (Ultra robuste)
+        private readonly IHubContext<MonitoringHub> _hubContext;
 
-        public ExamSessionController(AppDbContext context)
+        public ExamSessionController(AppDbContext context, IHubContext<MonitoringHub> hubContext)
         {
             _context = context;
+            _hubContext = hubContext;
         }
 
         [HttpPost("start")]
@@ -38,26 +40,18 @@ namespace SecureExam.API.Controllers
             var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (!int.TryParse(userIdString, out int userId)) return Unauthorized("Invalid token.");
 
-            var session = new ExamSession
-            {
-                UserId = userId,
-                StartTime = DateTime.UtcNow,
-                IsLocked = true 
-            };
-
+            var session = new ExamSession { UserId = userId, StartTime = DateTime.UtcNow, IsLocked = true };
             _context.ExamSessions.Add(session);
             await _context.SaveChangesAsync();
 
             return Ok(new { message = "Session started.", sessionId = session.Id });
         }
 
-        // --- 🧠 ANALYSE BIOMÉTRIQUE (DATA SCIENCE) ---
         [HttpPost("{sessionId}/analyze")]
         public async Task<IActionResult> AnalyzeKeystrokes(
             int sessionId, 
             [FromBody] List<KeystrokeDataDto> keystrokes,
-            [FromServices] KeystrokeAnalysisService analysisService,
-            [FromServices] IHubContext<MonitoringHub> hubContext)
+            [FromServices] KeystrokeAnalysisService analysisService)
         {
             var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (!int.TryParse(userIdString, out int userId)) return Unauthorized();
@@ -68,31 +62,17 @@ namespace SecureExam.API.Controllers
             var baseline = await _context.BaselineSignatures.FirstOrDefaultAsync(b => b.UserId == userId);
             if (baseline == null) return BadRequest("No baseline signature found.");
 
-            // L'analyse compare les frappes actuelles avec la signature de référence
             bool isAnomaly = analysisService.IsAnomalyDetected(keystrokes, baseline, out double score);
 
             if (isAnomaly)
             {
-                var alert = new IntegrityAlert
-                {
-                    ExamSessionId = sessionId,
-                    AlertType = "IdentitySuspicion",
-                    AnomalyScore = score,
-                    Timestamp = DateTime.UtcNow
-                };
-                
+                var alert = new IntegrityAlert { ExamSessionId = sessionId, AlertType = "IdentitySuspicion", AnomalyScore = score, Timestamp = DateTime.UtcNow };
                 _context.IntegrityAlerts.Add(alert);
-                session.IsLocked = false; // Verrouillage de la session suite à suspicion
+                session.IsLocked = false; 
                 await _context.SaveChangesAsync();
 
-                // Alerte en temps réel au professeur via SignalR
-                await hubContext.Clients.All.SendAsync("ReceiveAlert", new 
-                { 
-                    sessionId = sessionId, 
-                    type = "Identity Suspicion (Biometrics)", 
-                    score = Math.Round(score, 2),
-                    time = DateTime.Now.ToString("HH:mm:ss")
-                });
+                // 📡 Utilisation du Hub injecté
+                await _hubContext.Clients.All.SendAsync("ReceiveAlert", new { sessionId = sessionId, type = "Identity Suspicion (Biometrics)", score = Math.Round(score, 2), time = DateTime.Now.ToString("HH:mm:ss") });
 
                 return Ok(new { secure = false, message = "Integrity Alert: Biometric signature mismatch.", anomalyScore = score });
             }
@@ -100,22 +80,15 @@ namespace SecureExam.API.Controllers
             return Ok(new { secure = true, message = "Session secure.", anomalyScore = score });
         }
 
-        // --- 🚨 LOCKDOWN & INFRACTIONS VISUELLES (CYBERSECURITÉ) ---
-        
+        // --- 🚨 LOCKDOWN & INFRACTIONS VISUELLES ---
         [HttpPost("{sessionId}/lockdown-alert")]
-        [AllowAnonymous] // 👈 LE DÉBLOCAGE EST ICI : Permet à l'alerte de passer sans token strict pour le MVP
-        public async Task<IActionResult> TriggerLockdownAlert(
-            int sessionId, 
-            [FromBody] LockdownAlertDto dto,
-            [FromServices] IHubContext<MonitoringHub> hubContext)
+        [AllowAnonymous] // 👈 OBLIGATOIRE POUR LE MVP
+        public async Task<IActionResult> TriggerLockdownAlert(int sessionId, [FromBody] LockdownAlertDto dto)
         {
-            // 🚨 CORRECTIF MVP : On by-pass la vérification stricte en BDD 
-            // pour s'assurer que l'alerte est TOUJOURS envoyée au professeur en temps réel.
-            
-            // On diffuse l'alerte sur le tableau de bord professeur instantanément via SignalR
-            await hubContext.Clients.All.SendAsync("ReceiveAlert", new 
+            // 📡 2. DIFFUSION IMMÉDIATE DE L'ALERTE AU PROFESSEUR
+            await _hubContext.Clients.All.SendAsync("ReceiveAlert", new 
             { 
-                sessionId = sessionId, // Correspond à l'ExamId depuis React
+                sessionId = sessionId, 
                 type = dto.AlertType, 
                 score = 0.0,
                 time = DateTime.Now.ToString("HH:mm:ss")
