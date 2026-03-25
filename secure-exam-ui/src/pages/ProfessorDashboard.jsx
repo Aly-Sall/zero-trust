@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { HubConnectionBuilder, LogLevel } from "@microsoft/signalr"; // 📡 AJOUT : Import SignalR
+import * as signalR from "@microsoft/signalr"; // 📡 IMPORT CORRIGÉ
 import api from "../api/axiosConfig";
 import ScheduleExamModal from "../../components/ScheduleExamModal/ScheduleExamModal";
 
@@ -8,7 +8,7 @@ export default function ProfessorDashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [showManualForm, setShowManualForm] = useState(false);
 
-  // 📡 AJOUT : État pour le radar de sécurité
+  // 📡 État pour le radar de sécurité
   const [liveAlerts, setLiveAlerts] = useState([]);
 
   // State for manual creation
@@ -23,19 +23,22 @@ export default function ProfessorDashboard() {
     fetchBanks();
   }, []);
 
-  // 📡 AJOUT : Écoute des alertes via WebSocket (SignalR)
+  // 📡 CORRECTION : Écoute des alertes via WebSocket avec Force Transport
   useEffect(() => {
-    // ⚠️ Remplace '7194' par le port de ton backend C# si nécessaire
-    const hubConnection = new HubConnectionBuilder()
-      .withUrl("https://localhost:7194/monitoringHub")
-      .configureLogging(LogLevel.Information)
+    const hubConnection = new signalR.HubConnectionBuilder()
+      .withUrl("http://localhost:5162/monitoringHub", {
+        skipNegotiation: true, // Contourne les blocages CORS du navigateur
+        transport: signalR.HttpTransportType.WebSockets, // Force le tunnel temps réel
+      })
       .withAutomaticReconnect()
       .build();
 
     hubConnection
       .start()
-      .then(() => console.log("📡 Connected to Security Hub!"))
-      .catch((err) => console.error("SignalR Connection Error: ", err));
+      .then(() =>
+        console.log("🟢 Connected to AI Monitoring (Live) on port 5162!"),
+      )
+      .catch((err) => console.error("🔴 SignalR Connection Error: ", err));
 
     hubConnection.on("ReceiveAlert", (alertData) => {
       console.log("🚨 ALERTE REÇUE :", alertData);
@@ -43,7 +46,9 @@ export default function ProfessorDashboard() {
     });
 
     return () => {
-      hubConnection.stop();
+      if (hubConnection) {
+        hubConnection.stop();
+      }
     };
   }, []);
 
@@ -121,7 +126,7 @@ export default function ProfessorDashboard() {
           </div>
         </div>
 
-        {/* 🚨 AJOUT : SOC - LIVE SECURITY FEED */}
+        {/* 🚨 SOC - LIVE SECURITY FEED */}
         <div className="bg-[#161b22] border-2 border-red-900/50 rounded-xl p-8 shadow-[0_0_30px_rgba(220,38,38,0.1)]">
           <h2 className="text-xl font-bold mb-6 text-red-500 flex items-center gap-3 border-b border-gray-800 pb-3">
             <span className="relative flex h-3 w-3">
@@ -175,7 +180,7 @@ export default function ProfessorDashboard() {
           )}
         </div>
 
-        {/* FORMULAIRE MANUEL (Ton code d'origine) */}
+        {/* FORMULAIRE MANUEL */}
         {showManualForm && (
           <div className="bg-[#161b22] border border-gray-700 p-8 rounded-xl shadow-2xl">
             <h2 className="text-2xl font-bold mb-6 text-blue-400">

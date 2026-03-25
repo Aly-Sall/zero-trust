@@ -30,33 +30,27 @@ export default function ExamRoom() {
 
   // 🛡️ ZERO-TRUST : Active Browser Surveillance
   useEffect(() => {
-    const handleContextMenu = (e) => {
+    const handleContextMenu = async (e) => {
       e.preventDefault();
-      reportInfraction("Right-Click Attempt");
+      await reportInfraction("Right-Click Attempt");
     };
 
-    const handleCopyPaste = (e) => {
+    const handleCopyPaste = async (e) => {
       e.preventDefault();
-      reportInfraction("Copy/Paste Attempt");
-
-      // 🚀 ASTUCE : On retarde l'alerte de 100ms pour laisser la requête partir !
-      setTimeout(() => {
-        alert(
-          "⚠️ Copy/Paste is strictly forbidden. The professor has been notified.",
-        );
-      }, 100);
+      // On ATTEND que l'alerte parte au serveur avant de bloquer le navigateur
+      await reportInfraction("Copy/Paste Attempt");
+      alert(
+        "⚠️ Copy/Paste is strictly forbidden. The professor has been notified.",
+      );
     };
 
-    const handleVisibilityChange = () => {
+    const handleVisibilityChange = async () => {
       if (document.hidden) {
-        reportInfraction("Tab Switch / Left Exam Screen");
-
-        // 🚀 ASTUCE : On retarde l'alerte pour ne pas bloquer le thread réseau
-        setTimeout(() => {
-          alert(
-            "🚨 You left the exam screen! An integrity alert has been sent to the professor.",
-          );
-        }, 100);
+        // Envoi immédiat et attendu
+        await reportInfraction("Tab Switch / Left Exam Screen");
+        alert(
+          "🚨 You left the exam screen! An integrity alert has been sent to the professor.",
+        );
       }
     };
 
