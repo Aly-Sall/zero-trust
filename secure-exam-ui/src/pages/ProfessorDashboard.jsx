@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import * as signalR from "@microsoft/signalr"; // 📡 IMPORT CORRIGÉ
+import * as signalR from "@microsoft/signalr";
 import api from "../api/axiosConfig";
 import ScheduleExamModal from "../../components/ScheduleExamModal/ScheduleExamModal";
 
@@ -8,10 +8,12 @@ export default function ProfessorDashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [showManualForm, setShowManualForm] = useState(false);
 
-  // 📡 État pour le radar de sécurité
+  // 🚨 DÉJÀ EXISTANT : État pour le radar de sécurité
   const [liveAlerts, setLiveAlerts] = useState([]);
 
-  // State for manual creation
+  // 🎥 NOUVEAU : État pour stocker les images des webcams en direct
+  const [liveStreams, setLiveStreams] = useState({});
+
   const [manualBank, setManualBank] = useState({
     course: "",
     folderName: "",
@@ -19,30 +21,52 @@ export default function ProfessorDashboard() {
   });
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     fetchBanks();
   }, []);
 
-  // 📡 CORRECTION : Écoute des alertes via WebSocket avec Force Transport
+  // 📡 DÉJÀ EXISTANT + 🎥 NOUVEAU : ÉCOUTE SIGNALR
   useEffect(() => {
     const hubConnection = new signalR.HubConnectionBuilder()
       .withUrl("http://localhost:5162/monitoringHub", {
-        skipNegotiation: true, // Contourne les blocages CORS du navigateur
-        transport: signalR.HttpTransportType.WebSockets, // Force le tunnel temps réel
+        skipNegotiation: true,
+        transport: signalR.HttpTransportType.WebSockets,
       })
       .withAutomaticReconnect()
       .build();
 
     hubConnection
       .start()
-      .then(() =>
-        console.log("🟢 Connected to AI Monitoring (Live) on port 5162!"),
-      )
-      .catch((err) => console.error("🔴 SignalR Connection Error: ", err));
+      .then(() => console.log("🟢 Connected to SOC!"))
+      .catch((err) => console.error("🔴 Connection Error: ", err));
 
+    // 1. Écoute des alertes biométriques et de triche
     hubConnection.on("ReceiveAlert", (alertData) => {
-      console.log("🚨 ALERTE REÇUE :", alertData);
       setLiveAlerts((prevAlerts) => [alertData, ...prevAlerts]);
+    });
+
+    // 2. 🎥 NOUVEAU : Écoute des flux vidéos des étudiants (AVEC EMAIL)
+    hubConnection.on("ReceiveVideoFrame", (data) => {
+      // 🚀 NOUVEAU : Utilisation d'une clé composite (Session + Email)
+      const streamKey = `${data.sessionId}-${data.studentEmail}`;
+      setLiveStreams((prev) => ({
+        ...prev,
+        [streamKey]: {
+          sessionId: data.sessionId,
+          studentEmail: data.studentEmail,
+          frameData: data.frameData,
+        },
+      }));
+    });
+
+    // 3. 🛑 NOUVEAU : Écoute du Kill Switch pour retirer la caméra de l'étudiant
+    hubConnection.on("RemoveVideoFrame", (data) => {
+      // 🚀 NOUVEAU : On supprime la caméra en utilisant la clé composite
+      const streamKey = `${data.sessionId}-${data.studentEmail}`;
+      setLiveStreams((prevStreams) => {
+        const updatedStreams = { ...prevStreams };
+        delete updatedStreams[streamKey];
+        return updatedStreams;
+      });
     });
 
     return () => {
@@ -126,7 +150,41 @@ export default function ProfessorDashboard() {
           </div>
         </div>
 
-        {/* 🚨 SOC - LIVE SECURITY FEED */}
+        {/* 🎥 NOUVEAU : GRILLE DES CAMÉRAS DE SURVEILLANCE */}
+        {Object.keys(liveStreams).length > 0 && (
+          <div className="bg-[#161b22] border border-gray-700 rounded-xl p-6 shadow-xl">
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-white">
+              <span className="h-3 w-3 bg-red-500 rounded-full animate-pulse"></span>
+              Live Room Surveillance
+            </h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {Object.entries(liveStreams).map(([key, stream]) => (
+                <div
+                  key={key}
+                  className="relative bg-black rounded-lg border-2 border-gray-700 overflow-hidden shadow-lg"
+                >
+                  <div className="absolute top-2 left-2 bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow z-10">
+                    LIVE
+                  </div>
+                  {/* 🚀 NOUVEAU : AFFICHAGE DE L'EMAIL SUR LA CAMÉRA */}
+                  <div
+                    className="absolute top-2 right-2 bg-black/80 text-gray-300 text-[10px] px-2 py-0.5 rounded font-mono z-10 truncate max-w-[140px]"
+                    title={stream.studentEmail}
+                  >
+                    {stream.studentEmail}
+                  </div>
+                  <img
+                    src={stream.frameData}
+                    alt={`Student ${stream.studentEmail}`}
+                    className="w-full h-auto opacity-90 hover:opacity-100 transition-opacity"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 🚨 DÉJÀ EXISTANT : SOC - LIVE SECURITY FEED */}
         <div className="bg-[#161b22] border-2 border-red-900/50 rounded-xl p-8 shadow-[0_0_30px_rgba(220,38,38,0.1)]">
           <h2 className="text-xl font-bold mb-6 text-red-500 flex items-center gap-3 border-b border-gray-800 pb-3">
             <span className="relative flex h-3 w-3">
@@ -147,7 +205,7 @@ export default function ProfessorDashboard() {
                 <thead>
                   <tr className="border-b border-gray-700 text-gray-400 text-sm">
                     <th className="pb-3 pl-4">Time</th>
-                    <th className="pb-3">Session ID</th>
+                    <th className="pb-3">Student Info</th>
                     <th className="pb-3">Infraction Type</th>
                     <th className="pb-3 text-right pr-4">Action</th>
                   </tr>
@@ -161,8 +219,14 @@ export default function ProfessorDashboard() {
                       <td className="py-4 pl-4 font-mono text-gray-300">
                         {alert.time}
                       </td>
-                      <td className="py-4 font-mono text-blue-400">
-                        #{alert.sessionId}
+                      {/* 🚀 NOUVEAU : AFFICHAGE DE L'EMAIL ET DE L'ID DANS LE TABLEAU D'ALERTES */}
+                      <td className="py-4 font-mono flex flex-col justify-center">
+                        <span className="text-sm font-bold text-gray-200">
+                          {alert.studentEmail || "Unknown"}
+                        </span>
+                        <span className="text-xs text-blue-400">
+                          Exam #{alert.sessionId}
+                        </span>
                       </td>
                       <td className="py-4 font-bold text-red-400 flex items-center gap-2">
                         ⚠️ {alert.type}
@@ -180,7 +244,7 @@ export default function ProfessorDashboard() {
           )}
         </div>
 
-        {/* FORMULAIRE MANUEL */}
+        {/* DÉJÀ EXISTANT : FORMULAIRE MANUEL */}
         {showManualForm && (
           <div className="bg-[#161b22] border border-gray-700 p-8 rounded-xl shadow-2xl">
             <h2 className="text-2xl font-bold mb-6 text-blue-400">
@@ -282,7 +346,7 @@ export default function ProfessorDashboard() {
           </div>
         )}
 
-        {/* LIST OF BANKS */}
+        {/* DÉJÀ EXISTANT : LISTE DES BANQUES */}
         <div className="bg-[#161b22] border border-gray-700 p-6 rounded-xl shadow-xl">
           <h2 className="text-xl font-bold mb-4">
             📂 Available Question Banks

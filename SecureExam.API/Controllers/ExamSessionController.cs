@@ -9,7 +9,6 @@ using SecureExam.API.Models;
 using SecureExam.API.Services;
 using System;
 using System.Collections.Generic;
-using System.Security.Claims;
 using System.Threading.Tasks;
 
 namespace SecureExam.API.Controllers
@@ -17,15 +16,21 @@ namespace SecureExam.API.Controllers
     public class LockdownAlertDto
     {
         public string AlertType { get; set; } = string.Empty;
+        public string StudentEmail { get; set; } = string.Empty; // 🚀 ADDED EMAIL
+    }
+
+    public class AnalyzePayloadDto
+    {
+        public string StudentEmail { get; set; } = string.Empty;
+        public List<KeystrokeDataDto> Events { get; set; } = new();
     }
 
     [Route("api/[controller]")]
     [ApiController]
-    [Authorize]
+    [AllowAnonymous]
     public class ExamSessionController : ControllerBase
     {
         private readonly AppDbContext _context;
-        // 📡 1. INJECTION DE SIGNALR DANS LE CONSTRUCTEUR (Ultra robuste)
         private readonly IHubContext<MonitoringHub> _hubContext;
 
         public ExamSessionController(AppDbContext context, IHubContext<MonitoringHub> hubContext)
@@ -35,60 +40,48 @@ namespace SecureExam.API.Controllers
         }
 
         [HttpPost("start")]
-        public async Task<IActionResult> StartSession()
+        public IActionResult StartSession()
         {
-            var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (!int.TryParse(userIdString, out int userId)) return Unauthorized("Invalid token.");
-
-            var session = new ExamSession { UserId = userId, StartTime = DateTime.UtcNow, IsLocked = true };
-            _context.ExamSessions.Add(session);
-            await _context.SaveChangesAsync();
-
-            return Ok(new { message = "Session started.", sessionId = session.Id });
+            return Ok(new { message = "Session started." });
         }
 
-        [HttpPost("{sessionId}/analyze")]
+        [HttpPost("{examId}/analyze")]
         public async Task<IActionResult> AnalyzeKeystrokes(
-            int sessionId, 
-            [FromBody] List<KeystrokeDataDto> keystrokes,
+            int examId, 
+            [FromBody] AnalyzePayloadDto payload,
             [FromServices] KeystrokeAnalysisService analysisService)
         {
-            var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (!int.TryParse(userIdString, out int userId)) return Unauthorized();
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == payload.StudentEmail);
+            if (user == null) return BadRequest(new { secure = false, message = "Student not found." });
 
-            var session = await _context.ExamSessions.FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId);
-            if (session == null) return NotFound("Session not found.");
+            var baseline = await _context.BaselineSignatures.FirstOrDefaultAsync(b => b.UserId == user.Id);
+            if (baseline == null) return BadRequest(new { secure = false, message = "No baseline found." });
 
-            var baseline = await _context.BaselineSignatures.FirstOrDefaultAsync(b => b.UserId == userId);
-            if (baseline == null) return BadRequest("No baseline signature found.");
-
-            bool isAnomaly = analysisService.IsAnomalyDetected(keystrokes, baseline, out double score);
+            bool isAnomaly = analysisService.IsAnomalyDetected(payload.Events, baseline, out double score);
 
             if (isAnomaly)
             {
-                var alert = new IntegrityAlert { ExamSessionId = sessionId, AlertType = "IdentitySuspicion", AnomalyScore = score, Timestamp = DateTime.UtcNow };
-                _context.IntegrityAlerts.Add(alert);
-                session.IsLocked = false; 
-                await _context.SaveChangesAsync();
+                await _hubContext.Clients.All.SendAsync("ReceiveAlert", new { 
+                    sessionId = examId, 
+                    studentEmail = payload.StudentEmail, // 🚀 ADDED EMAIL TO ALERT
+                    type = "Identity Suspicion (Biometrics)", 
+                    score = Math.Round(score, 2), 
+                    time = DateTime.Now.ToString("HH:mm:ss") 
+                });
 
-                // 📡 Utilisation du Hub injecté
-                await _hubContext.Clients.All.SendAsync("ReceiveAlert", new { sessionId = sessionId, type = "Identity Suspicion (Biometrics)", score = Math.Round(score, 2), time = DateTime.Now.ToString("HH:mm:ss") });
-
-                return Ok(new { secure = false, message = "Integrity Alert: Biometric signature mismatch.", anomalyScore = score });
+                return Ok(new { secure = false, message = "Biometric mismatch.", anomalyScore = score });
             }
 
             return Ok(new { secure = true, message = "Session secure.", anomalyScore = score });
         }
 
-        // --- 🚨 LOCKDOWN & INFRACTIONS VISUELLES ---
-        [HttpPost("{sessionId}/lockdown-alert")]
-        [AllowAnonymous] // 👈 OBLIGATOIRE POUR LE MVP
-        public async Task<IActionResult> TriggerLockdownAlert(int sessionId, [FromBody] LockdownAlertDto dto)
+        [HttpPost("{examId}/lockdown-alert")]
+        public async Task<IActionResult> TriggerLockdownAlert(int examId, [FromBody] LockdownAlertDto dto)
         {
-            // 📡 2. DIFFUSION IMMÉDIATE DE L'ALERTE AU PROFESSEUR
             await _hubContext.Clients.All.SendAsync("ReceiveAlert", new 
             { 
-                sessionId = sessionId, 
+                sessionId = examId, 
+                studentEmail = dto.StudentEmail, // 🚀 ADDED EMAIL TO ALERT
                 type = dto.AlertType, 
                 score = 0.0,
                 time = DateTime.Now.ToString("HH:mm:ss")
